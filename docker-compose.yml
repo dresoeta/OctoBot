@@ -3,80 +3,14 @@ version: "3"
 services:
   octobot:
     image: drakkarsoftware/octobot:stable
-    command: |
-      sh -e -c '
-        VENV=/opt/venv/bin/python
-        # 1. upgrade ccxt inside OctoBot venv to latest version
-        echo ">> Installing latest ccxt version..."
-        $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.85"
-
-        # 2. hot-patch Indodax (limits + 24 h volume)
-        echo ">> Loading Indodax patches..."
-        $VENV - << "PY"
-        import sys
-        sys.path.insert(0, "/octobot/user")
-
-        try:
-            import ccxt
-            print(f">> Using ccxt version: {ccxt.__version__}", file=sys.stderr)
-
-            # Import and run the indodax_fix module with proper error handling
-            try:
-                import importlib.util
-                import pathlib
-
-                # Define the path to the fix module
-                fix_path = pathlib.Path("/octobot/user/indodax_fix.py")
-
-                if not fix_path.exists():
-                    print(f">> Error: {fix_path} does not exist", file=sys.stderr)
-                    sys.exit(1)
-
-                # Load the module
-                spec = importlib.util.spec_from_file_location("indodax_fix", fix_path)
-                if spec is None:
-                    print(f">> Error: Could not create spec for {fix_path}", file=sys.stderr)
-                    sys.exit(1)
-
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                print(">> Indodax patch loaded successfully", file=sys.stderr)
-            except Exception as e:
-                print(f">> Error loading Indodax patches: {e}", file=sys.stderr)
-                sys.exit(1)
-        except Exception as e:
-            print(f">> Critical error: {e}", file=sys.stderr)
-            sys.exit(1)
-        PY
-
-        # 3. launch OctoBot
-        echo ">> Starting OctoBot..."
-        $VENV -m octobot -c /conf/config.yaml &
-        OCTOBOT_PID=$!
-
-        # 4. Wait for OctoBot to initialize and then apply monkey patches
-        echo ">> Waiting for OctoBot to initialize..."
-        sleep 10
-        echo ">> Applying runtime monkey patches..."
-        $VENV - << "PY"
-        import sys
-        sys.path.insert(0, "/octobot/user")
-        try:
-            import monkey_patch
-            print(">> Monkey patches applied", file=sys.stderr)
-        except Exception as e:
-            print(f">> Error applying monkey patches: {e}", file=sys.stderr)
-        PY
-
-        # 5. Wait for OctoBot to finish
-        wait $OCTOBOT_PID
-        '
+    command: >
+      sh -c "pip install --no-cache-dir 'ccxt>=4.4.94' &&
+             octobot -c /conf/config.yaml"
     volumes:
       - ./logs:/octobot/logs
       - ./backtesting:/octobot/backtesting
       - ./tentacles:/octobot/tentacles
       - ./user:/octobot/user
-      - ./conf:/conf
     ports:
       - ${PORT:-5001}:${PORT:-5001}
     restart: always

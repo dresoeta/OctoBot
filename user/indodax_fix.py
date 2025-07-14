@@ -6,35 +6,6 @@ import ccxt
 from decimal import Decimal
 import sys
 import time
-import importlib
-from typing import Any, Dict, Optional, Tuple
-
-def _patch_ccxt_create_order(exchange: ccxt.indodax):
-    """Patch the create_order method to multiply the price by 100 for DRX/IDR."""
-    print(">> Patching Indodax create_order method...", file=sys.stderr)
-
-    original_create_order = exchange.create_order
-
-    def patched_create_order(symbol: str, type: str, side: str, amount: float, price: Optional[float] = None, params: Dict = {}):
-        try:
-            print(f">> Creating order: {symbol} {type} {side} {amount} @ {price}", file=sys.stderr)
-
-            # For DRX/IDR, scale the price to meet Indodax requirements
-            if symbol == 'DRX/IDR' and price is not None:
-                # Indodax requires min price of 10000, so we multiply by 100
-                # This will be displayed in OctoBot as the original price but sent to exchange as scaled price
-                scaled_price = price * 100
-                print(f">> Scaling price for DRX/IDR: {price} -> {scaled_price}", file=sys.stderr)
-                return original_create_order(symbol, type, side, amount, scaled_price, params)
-
-            # Regular order creation for other symbols
-            return original_create_order(symbol, type, side, amount, price, params)
-        except Exception as e:
-            print(f">> Error in patched create_order: {e}", file=sys.stderr)
-            raise
-
-    # Replace the method
-    exchange.create_order = patched_create_order
 
 def _patch_limits(exchange: ccxt.indodax):
     """Relax Indodax limits for DRX/IDR trading."""
@@ -60,9 +31,9 @@ def _patch_limits(exchange: ccxt.indodax):
             'quoteId': 'idr',
             'active': True,
             'limits': {
-                'amount': {'min': 1.0, 'max': None},
-                'price': {'min': 1.0, 'max': None},  # We'll scale prices in create_order
-                'cost': {'min': 1.0, 'max': None},
+                'amount': {'min': 66.53613917, 'max': None},
+                'price': {'min': 10000.0, 'max': None},
+                'cost': {'min': None, 'max': None},
                 'leverage': {'min': None, 'max': None}
             },
             'precision': {
@@ -77,15 +48,14 @@ def _patch_limits(exchange: ccxt.indodax):
         m = exchange.markets['DRX/IDR']
         print(f">> Original limits: {m['limits']}", file=sys.stderr)
 
-        # Relax amount minimum (original min was ~66.5)
-        m['limits']['amount']['min'] = 1.0
+        # Relax price minimum (original min was 10000.0)
+        m['limits']['price']['min'] = 0.0
 
-        # Set price minimum to a value that will work with OctoBot's UI
-        # but we'll scale the actual price in create_order
-        m['limits']['price']['min'] = 1.0
+        # Relax amount minimum (original min was ~66.5)
+        m['limits']['amount']['min'] = 0.1
 
         # Relax cost minimum
-        m['limits']['cost']['min'] = 1.0
+        m['limits']['cost']['min'] = 0.0
 
         print(f">> Updated limits: {m['limits']}", file=sys.stderr)
     else:
@@ -94,15 +64,11 @@ def _patch_limits(exchange: ccxt.indodax):
 def _patch_fetch_ticker(exchange: ccxt.indodax):
     """Fill missing base/quote volume so OctoBot gets real numbers."""
     print(">> Patching Indodax fetch_ticker...", file=sys.stderr)
-    
+
     orig = exchange.fetch_ticker
 
     def fetch_ticker(symbol, params={}):
-        # Always start with these guaranteed defaults
-        default_volume = 20000000.0  # Higher volume for more liquidity
-        default_quote_volume = 3000000000.0  # 3 billion IDR
-
-        t = {'baseVolume': default_volume, 'quoteVolume': default_quote_volume}
+        t = {'baseVolume': 1000000.0, 'quoteVolume': 150000000.0}  # Default values
 
         try:
             # Call original method
@@ -112,19 +78,44 @@ def _patch_fetch_ticker(exchange: ccxt.indodax):
             print(f">> Original ticker for {symbol}: baseVolume={t.get('baseVolume')}, quoteVolume={t.get('quoteVolume')}", file=sys.stderr)
 
             # Ensure we have valid volumes (not None or NaN)
-            if t.get('baseVolume') is None or str(t.get('baseVolume')).lower() == 'nan' or float(t.get('baseVolume', 0)) == 0:
-                t['baseVolume'] = default_volume
-                print(f">> Fixing invalid baseVolume with default {default_volume}", file=sys.stderr)
+            if t.get('baseVolume') is None or str(t.get('baseVolume')).lower() == 'nan':
+                t['baseVolume'] = 1000000.0
+                print(f">> Fixing invalid baseVolume with default", file=sys.stderr)
 
-            if t.get('quoteVolume') is None or str(t.get('quoteVolume')).lower() == 'nan' or float(t.get('quoteVolume', 0)) == 0:
-                t['quoteVolume'] = default_quote_volume
-                print(f">> Fixing invalid quoteVolume with default {default_quote_volume}", file=sys.stderr)
+            if t.get('quoteVolume') is None or str(t.get('quoteVolume')).lower() == 'nan':
+                t['quoteVolume'] = 150000000.0
+                print(f">> Fixing invalid quoteVolume with default", file=sys.stderr)
 
-            # For DRX/IDR specifically
-            if symbol == 'DRX/IDR':
-                print(f">> Setting fixed volumes for DRX/IDR", file=sys.stderr)
-                t['baseVolume'] = default_volume
-                t['quoteVolume'] = default_quote_volume
+            # Try to get accurate market data
+            try:
+                market_id = exchange.market_id(symbol)
+                print(f">> Market ID for {symbol}: {market_id}", file=sys.stderr)
+
+                # Get summary data
+                raw = exchange.publicGetSummary()
+
+                if market_id in raw:
+                    info = raw[market_id]
+                    base, quote = symbol.split('/')
+
+                    # Get volume data
+                    bv_key = f'vol_{base.lower()}'
+                    qv_key = f'vol_{quote.lower()}'
+
+                    bv = info.get(bv_key)
+                    qv = info.get(qv_key)
+
+                    print(f">> Volume data from API: {bv_key}={bv}, {qv_key}={qv}", file=sys.stderr)
+
+                    if bv and bv != '0':
+                        t['baseVolume'] = float(bv)
+                    if qv and qv != '0':
+                        t['quoteVolume'] = float(qv)
+                else:
+                    print(f">> Market {market_id} not found in summary, using defaults", file=sys.stderr)
+            except Exception as e:
+                print(f">> Error getting market data: {e}", file=sys.stderr)
+                # Continue with defaults already set
 
         except Exception as e:
             print(f">> Error in fetch_ticker patch: {e}. Using default volumes.", file=sys.stderr)
@@ -133,17 +124,10 @@ def _patch_fetch_ticker(exchange: ccxt.indodax):
         try:
             t['baseVolume'] = float(t['baseVolume'])
             t['quoteVolume'] = float(t['quoteVolume'])
-
-            # Safety check - ensure volumes are non-zero
-            if t['baseVolume'] <= 0:
-                t['baseVolume'] = default_volume
-            if t['quoteVolume'] <= 0:
-                t['quoteVolume'] = default_quote_volume
-
         except (ValueError, TypeError):
             print(">> Conversion error, using defaults", file=sys.stderr)
-            t['baseVolume'] = default_volume
-            t['quoteVolume'] = default_quote_volume
+            t['baseVolume'] = 1000000.0
+            t['quoteVolume'] = 150000000.0
 
         print(f">> Final ticker for {symbol}: baseVolume={t.get('baseVolume')}, quoteVolume={t.get('quoteVolume')}", file=sys.stderr)
         return t
@@ -174,7 +158,7 @@ def _patch_get_daily_volume():
                 except ValueError as e:
                     print(f">> Caught volume computation error: {e}. Using default values.", file=sys.stderr)
                     # Return reasonable defaults
-                    return 20000000.0, 3000000000.0
+                    return 1000000.0, 150000000.0
 
             # Create patched get_daily_base_and_quote_volume_from_ticker function
             def patched_get_daily_volume_from_ticker(ticker, reference_price):
@@ -182,7 +166,7 @@ def _patch_get_daily_volume():
                     return orig_get_daily_volume_from_ticker(ticker, reference_price)
                 except Exception as e:
                     print(f">> Caught ticker volume error: {e}. Using default values.", file=sys.stderr)
-                    return 20000000.0, 3000000000.0
+                    return 1000000.0, 150000000.0
 
             # Create patched get_daily_base_and_quote_volume function
             def patched_get_daily_volume(symbol_data, reference_price):
@@ -190,7 +174,7 @@ def _patch_get_daily_volume():
                     return orig_get_daily_volume(symbol_data, reference_price)
                 except Exception as e:
                     print(f">> Caught daily volume error: {e}. Using default values.", file=sys.stderr)
-                    return 20000000.0, 3000000000.0
+                    return 1000000.0, 150000000.0
 
             # Apply patches
             symbol_data_api.compute_base_and_quote_volume = patched_compute_volume
@@ -204,39 +188,6 @@ def _patch_get_daily_volume():
             return False
     except Exception as e:
         print(f">> Unexpected error in _patch_get_daily_volume: {e}", file=sys.stderr)
-        return False
-
-# Additional function to patch market_making_trading.py
-def _patch_market_making_module():
-    """Patch the market_making_trading module to bypass exchange limit checks for DRX/IDR."""
-    try:
-        print(">> Attempting to patch market_making_trading module", file=sys.stderr)
-
-        # Check if the module exists
-        try:
-            import tentacles.Trading.Mode.market_making_trading_mode.market_making_trading as market_making
-
-            # Store original method
-            orig_check_valid_price_and_quantity = market_making.MarketMakingTradingModeConsumer._check_valid_price_and_quantity
-
-            # Create patched method
-            def patched_check_valid_price_and_quantity(self, symbol, quantity, price, side):
-                # For DRX/IDR, we'll bypass the check or scale the price
-                if symbol == 'DRX/IDR':
-                    print(f">> Bypassing exchange limit check for DRX/IDR: {quantity} @ {price}", file=sys.stderr)
-                    return True
-                # For other symbols, use the original method
-                return orig_check_valid_price_and_quantity(self, symbol, quantity, price, side)
-
-            # Apply patch
-            market_making.MarketMakingTradingModeConsumer._check_valid_price_and_quantity = patched_check_valid_price_and_quantity
-            print(">> Successfully patched market_making_trading module", file=sys.stderr)
-            return True
-        except ImportError as e:
-            print(f">> Could not import market_making_trading module: {e}", file=sys.stderr)
-            return False
-    except Exception as e:
-        print(f">> Unexpected error in _patch_market_making_module: {e}", file=sys.stderr)
         return False
 
 def apply_patches():
@@ -262,14 +213,9 @@ def apply_patches():
         # Apply patches even if markets failed to load
         _patch_limits(test_exchange)
         _patch_fetch_ticker(test_exchange)
-        _patch_ccxt_create_order(test_exchange)
 
         # Additionally patch OctoBot's trading API functions
         _patch_get_daily_volume()
-
-        # Try to patch market making module
-        # This will be applied after OctoBot loads, via the main container
-        _patch_market_making_module()
 
         print(">> Indodax patches applied successfully", file=sys.stderr)
         return True
