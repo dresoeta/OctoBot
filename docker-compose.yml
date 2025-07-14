@@ -6,19 +6,51 @@ services:
     command: |
       sh -e -c '
         VENV=/opt/venv/bin/python
-        # 1. upgrade ccxt inside OctoBot venv
-        $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.60"
-      
+        # 1. upgrade ccxt inside OctoBot venv to latest version
+        echo ">> Installing latest ccxt version..."
+        $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.85"
+
         # 2. hot-patch Indodax (limits + 24 h volume)
+        echo ">> Loading Indodax patches..."
         $VENV - << "PY"
-        import importlib.util, pathlib, sys, ccxt
-        spec = importlib.util.spec_from_file_location(
-        "indodax_fix", pathlib.Path("/octobot/user/indodax_fix.py"))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        print(">> Indodax patch loaded; ccxt", ccxt.__version__, file=sys.stderr)
+        import sys
+        sys.path.insert(0, "/octobot/user")
+
+        try:
+            import ccxt
+            print(f">> Using ccxt version: {ccxt.__version__}", file=sys.stderr)
+
+            # Import and run the indodax_fix module with proper error handling
+            try:
+                import importlib.util
+                import pathlib
+
+                # Define the path to the fix module
+                fix_path = pathlib.Path("/octobot/user/indodax_fix.py")
+
+                if not fix_path.exists():
+                    print(f">> Error: {fix_path} does not exist", file=sys.stderr)
+                    sys.exit(1)
+
+                # Load the module
+                spec = importlib.util.spec_from_file_location("indodax_fix", fix_path)
+                if spec is None:
+                    print(f">> Error: Could not create spec for {fix_path}", file=sys.stderr)
+                    sys.exit(1)
+
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                print(">> Indodax patch loaded successfully", file=sys.stderr)
+            except Exception as e:
+                print(f">> Error loading Indodax patches: {e}", file=sys.stderr)
+                sys.exit(1)
+        except Exception as e:
+            print(f">> Critical error: {e}", file=sys.stderr)
+            sys.exit(1)
         PY
-    
+
         # 3. launch OctoBot
+        echo ">> Starting OctoBot..."
         exec $VENV -m octobot -c /conf/config.yaml
         '
     volumes:
