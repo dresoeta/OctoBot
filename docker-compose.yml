@@ -3,26 +3,31 @@ version: "3"
 services:
   octobot:
     image: drakkarsoftware/octobot:stable
-    command: >
+    command: |
       sh -e -c '
         VENV=/opt/venv/bin/python
+        # upgrade ccxt inside OctoBot venv
         $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.60"
+      
+        # load Indodax patch from /octobot/user
         $VENV - << "PY"
-    import importlib.util, pathlib, ccxt, sys
-    spec = importlib.util.spec_from_file_location(
-    "indodax_fix", pathlib.Path("/octobot/user/indodax_limit_fix.py"))
-    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-    print(">> Indodax patch loaded; ccxt", ccxt.__version__, file=sys.stderr)
-    PY
-    exec $VENV -m octobot -c /conf/config.yaml
-    '
+        import importlib.util, pathlib, ccxt, sys
+        spec = importlib.util.spec_from_file_location(
+        "indodax_fix", pathlib.Path("/octobot/user/indodax_limit_fix.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        print(">> Indodax patch loaded; ccxt", ccxt.__version__, file=sys.stderr)
+        PY
+      
+        # launch OctoBot
+        exec $VENV -m octobot -c /conf/config.yaml
+        '
     volumes:
-       - ./logs:/octobot/logs
-       - ./backtesting:/octobot/backtesting
-       - ./tentacles:/octobot/tentacles
-       - ./user:/octobot/user
+      - ./logs:/octobot/logs
+      - ./backtesting:/octobot/backtesting
+      - ./tentacles:/octobot/tentacles
+      - ./user:/octobot/user
     ports:
-       - ${PORT:-5001}:${PORT:-5001}
+      - ${PORT:-5001}:${PORT:-5001}
     restart: always
 
   watchtower:
