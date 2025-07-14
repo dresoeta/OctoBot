@@ -6,19 +6,19 @@ services:
     command: |
       sh -e -c '
         VENV=/opt/venv/bin/python
-        # upgrade ccxt inside OctoBot venv
+        # 1. upgrade ccxt inside OctoBot venv
         $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.60"
       
-        # load Indodax patch from /octobot/user
+        # 2. hot-patch Indodax (limits + 24 h volume)
         $VENV - << "PY"
-        import importlib.util, pathlib, ccxt, sys
+        import importlib.util, pathlib, sys, ccxt
         spec = importlib.util.spec_from_file_location(
-        "indodax_fix", pathlib.Path("/octobot/user/indodax_limit_fix.py"))
+        "indodax_fix", pathlib.Path("/octobot/user/indodax_fix.py"))
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
         print(">> Indodax patch loaded; ccxt", ccxt.__version__, file=sys.stderr)
         PY
-      
-        # launch OctoBot
+    
+        # 3. launch OctoBot
         exec $VENV -m octobot -c /conf/config.yaml
         '
     volumes:

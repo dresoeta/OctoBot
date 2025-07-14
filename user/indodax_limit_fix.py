@@ -1,42 +1,38 @@
-"""
-Indodax hot-fixes for OctoBot
-1.  remove bogus 10 000-IDR price.min
-2.  rebuild quoteVolume when Indodax omits it
-"""
-import ccxt, functools
+# /octobot/user/indodax_fix.py
+# --- patched at container start by docker-compose.yml ---
 
-# ---- 1) patch fetch_markets --------------------------------------
-def _patch_limits(cls):
-    orig = cls.fetch_markets
-    @functools.wraps(orig)
-    def fixed(self, params={}):
-        mkts = orig(self, params)
-        for m in mkts:
-            if m["quote"] == "IDR":
-                m["limits"]["price"]["min"] = None
-                m["limits"]["cost"]["min"]  = 10_000      # real rule
-        return mkts
-    cls.fetch_markets = fixed
+import ccxt
+from decimal import Decimal
 
-# ---- 2) patch parse_ticker ---------------------------------------
-def _patch_ticker(cls):
-    orig = cls.parse_ticker
-    def fixed(self, t, market=None):
-        r = orig(self, t, market)
-        if (r.get("baseVolume") not in (None, self.nan)
-                and r.get("quoteVolume") in (None, self.nan)
-                and r.get("last") not in (None, self.nan)):
-            r["quoteVolume"] = r["baseVolume"] * r["last"]
-        return r
-    cls.parse_ticker = fixed
+def _patch_limits(exchange: ccxt.indodax):
+    """Relax Indodax limits ⇒ price_min=0 ; keep amount_min (≈65 IDR now)."""
+    if 'DRX/IDR' in exchange.markets:
+        m = exchange.markets['DRX/IDR']
+        m['limits']['price']['min'] = 0
+        m['limits']['cost']['min'] = 0
 
-for C in (ccxt.indodax.indodax,):
-    _patch_limits(C); _patch_ticker(C)
+def _patch_fetch_ticker(exchange: ccxt.indodax):
+    """Fill missing base/quote volume so OctoBot gets real numbers."""
+    orig = exchange.fetch_ticker
 
-# async version (OctoBot sometimes uses it)
-try:
-    import ccxt.async_support as ax
-    for C in (ax.indodax.indodax,):
-        _patch_limits(C); _patch_ticker(C)
-except ImportError:
-    pass
+    def fetch_ticker(symbol, params={}):
+        t = orig(symbol, params)
+        market_id = exchange.market_id(symbol)            # e.g. 'drxidr'
+        raw = exchange.publicGetSummary()                 # single call, tiny
+        if market_id in raw:
+            info = raw[market_id]
+            # Indodax returns vols in the 24h summary as strings
+            base, quote = symbol.split('/')
+            bv = info.get(f'vol_{base.lower()}')
+            qv = info.get(f'vol_{quote.lower()}')
+            if bv:  t['baseVolume']  = float(bv)
+            if qv:  t['quoteVolume'] = float(qv)
+        return t
+
+    exchange.fetch_ticker = fetch_ticker
+
+# ---- apply both patches on module import ----
+ex = ccxt.indodax({'enableRateLimit': True})
+_patch_limits(ex)
+_patch_fetch_ticker(ex)       # patches the class method, so all instances inherit
+print(">> Indodax limits & volume hot-patch loaded")
