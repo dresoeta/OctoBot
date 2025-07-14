@@ -4,8 +4,18 @@ services:
   octobot:
     image: drakkarsoftware/octobot:stable
     command: >
-      sh -c "pip install --no-cache-dir 'ccxt>=4.4.94' &&
-             octobot -c /conf/config.yaml"
+      sh -e -c '
+        VENV=/opt/venv/bin/python
+        $VENV -m pip install --no-cache-dir --force-reinstall "ccxt>=4.4.60"
+        $VENV - << "PY"
+    import importlib.util, pathlib, ccxt, sys
+    spec = importlib.util.spec_from_file_location(
+    "indodax_fix", pathlib.Path("/octobot/user/indodax_limit_fix.py"))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    print(">> Indodax patch loaded; ccxt", ccxt.__version__, file=sys.stderr)
+    PY
+    exec $VENV -m octobot -c /conf/config.yaml
+    '
     volumes:
        - ./logs:/octobot/logs
        - ./backtesting:/octobot/backtesting

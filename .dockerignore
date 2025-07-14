@@ -12,7 +12,7 @@ tox.ini
 
 # octobot
 tentacles
-user
+
 logs
 
 # Git
