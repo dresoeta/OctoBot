@@ -51,13 +51,32 @@ services:
 
         # 3. launch OctoBot
         echo ">> Starting OctoBot..."
-        exec $VENV -m octobot -c /conf/config.yaml
+        $VENV -m octobot -c /conf/config.yaml &
+        OCTOBOT_PID=$!
+
+        # 4. Wait for OctoBot to initialize and then apply monkey patches
+        echo ">> Waiting for OctoBot to initialize..."
+        sleep 10
+        echo ">> Applying runtime monkey patches..."
+        $VENV - << "PY"
+        import sys
+        sys.path.insert(0, "/octobot/user")
+        try:
+            import monkey_patch
+            print(">> Monkey patches applied", file=sys.stderr)
+        except Exception as e:
+            print(f">> Error applying monkey patches: {e}", file=sys.stderr)
+        PY
+
+        # 5. Wait for OctoBot to finish
+        wait $OCTOBOT_PID
         '
     volumes:
       - ./logs:/octobot/logs
       - ./backtesting:/octobot/backtesting
       - ./tentacles:/octobot/tentacles
       - ./user:/octobot/user
+      - ./conf:/conf
     ports:
       - ${PORT:-5001}:${PORT:-5001}
     restart: always
