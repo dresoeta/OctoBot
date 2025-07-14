@@ -4,17 +4,8 @@ services:
   octobot:
     image: drakkarsoftware/octobot:stable
     command: >
-      sh -e -c "
-        python3 -m pip install --no-cache-dir --force-reinstall 'ccxt>=4.4.60' &&
-        python3 - <<'PY'
-    import importlib.util, pathlib, sys, ccxt
-    patch = pathlib.Path('/octobot/user/patch_indodax.py')
-    spec  = importlib.util.spec_from_file_location('patch_indodax', patch)
-    mod   = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-    print('ccxt version after patch:', ccxt.__version__, file=sys.stderr)
-    PY
-    && exec octobot -c /conf/config.yaml
-    "
+      sh -c "pip install --no-cache-dir 'ccxt>=4.4.94' &&
+             octobot -c /conf/config.yaml"
     volumes:
        - ./logs:/octobot/logs
        - ./backtesting:/octobot/backtesting
