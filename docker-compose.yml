@@ -4,10 +4,18 @@ services:
   octobot:
     image: drakkarsoftware/octobot:stable
     entrypoint: >
-      sh -c "
-        /opt/venv/bin/pip install --no-cache-dir --force-reinstall --no-deps 'ccxt==4.3.85' &&
-        exec /opt/venv/bin/python -m octobot -c /conf/config.yaml
-      "
+      sh -c '
+        # 1) Let OctoBot’s wrapper finish its self‑updates first
+        /usr/local/bin/docker-entrypoint.sh &   # original ENTRYPOINT in bg
+        pid=$!
+        wait $pid                              # <- after this, octobot‑trading will have pulled ccxt 4.4.x
+      
+        # 2) Hard‑pin ccxt without touching dependencies
+        /opt/venv/bin/pip install --no-cache-dir --force-reinstall --no-deps "ccxt==4.3.85"
+      
+        # 3) Launch OctoBot the normal way
+        exec /opt/venv/bin/octobot -c /conf/config.yaml
+      '
     volumes:
        - ./logs:/octobot/logs
        - ./backtesting:/octobot/backtesting
