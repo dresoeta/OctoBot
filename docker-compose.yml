@@ -2,7 +2,7 @@ version: "3"
 
 services:
   octobot:
-    image: drakkarsoftware/octobot:marketmaking-latest
+    image: drakkarsoftware/octobot:latest
     volumes:
        - ./logs:/octobot/logs
        - ./backtesting:/octobot/backtesting
