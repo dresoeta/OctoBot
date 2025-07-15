@@ -3,6 +3,11 @@ version: "3"
 services:
   octobot:
     image: drakkarsoftware/octobot:stable
+    command: >
+      sh -c "
+        /opt/venv/bin/pip install --no-cache-dir --force-reinstall --no-deps 'ccxt==4.3.85' &&
+        exec /opt/venv/bin/python -m octobot -c /conf/config.yaml
+      "
     volumes:
        - ./logs:/octobot/logs
        - ./backtesting:/octobot/backtesting
